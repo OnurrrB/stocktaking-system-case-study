@@ -1,9 +1,9 @@
-# StockWise — Case Study
+# Inventory & Stocktaking System — Case Study
 
 A .NET 8 WPF inventory and stocktaking application for professional inventory-counting
 firms, built and maintained by a single developer over 286 commits.
 
-> **This repository contains no source code.** StockWise is a commercial product and its
+> **This repository contains no source code.** This is a commercial product and its
 > source is private. What follows is a description of the problem, the architecture and
 > the engineering decisions behind it.
 
@@ -36,10 +36,10 @@ because it targets a completely different runtime.
 ```mermaid
 flowchart TB
     subgraph Desktop["Desktop application — .NET 8"]
-        App["StockWise.App<br/>WPF · MVVM · Views &amp; ViewModels"]
-        Services["StockWise.Services<br/>TCP · Auth · Reporting · Barcode · Import"]
-        Data["StockWise.Data<br/>EF Core 8 · DbContext · Migrations"]
-        Core["StockWise.Core<br/>Domain models · DTOs · SessionContext"]
+        App["App<br/>WPF · MVVM · Views &amp; ViewModels"]
+        Services["Services<br/>TCP · Auth · Reporting · Barcode · Import"]
+        Data["Data<br/>EF Core 8 · DbContext · Migrations"]
+        Core["Core<br/>Domain models · DTOs · SessionContext"]
         App --> Services --> Data --> Core
     end
 
