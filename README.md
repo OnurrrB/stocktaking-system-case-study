@@ -197,13 +197,6 @@ the reasoning behind a rejected option is part of the record too.
 
 ---
 
-## Screenshots
-
-Screenshots are not published while the product is being prepared for sale. The diagram
-above shows how the parts fit together.
-
----
-
 ## Contact
 
 Onur Buz — [github.com/OnurrrB](https://github.com/OnurrrB) ·
