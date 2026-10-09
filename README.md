@@ -1,11 +1,16 @@
 # Inventory & Stocktaking System — Case Study
 
-A .NET 8 WPF inventory and stocktaking application for professional inventory-counting
-firms, built and maintained by a single developer over 286 commits.
+A .NET 8 WPF desktop application and a Windows Mobile handheld client for professional
+inventory-counting firms. Designed and written by a single developer between March and
+September 2026 (about 290 commits).
 
-> **This repository contains no source code.** This is a commercial product and its
-> source is private. What follows is a description of the problem, the architecture and
-> the engineering decisions behind it.
+> **This repository contains no source code.** The product is being prepared for sale and
+> its source is private. What follows is a description of the problem, the architecture
+> and the engineering decisions behind it.
+
+**Status:** not yet in commercial use. The desktop application and the handheld client have
+been tested together on a real Windows Mobile 6.5 device; there has been no field deployment
+or pilot count yet.
 
 ---
 
@@ -13,9 +18,8 @@ firms, built and maintained by a single developer over 286 commits.
 
 Professional counting firms are hired to count someone else's inventory — a supermarket
 chain, a warehouse, a pharmacy group. A count is a one-shot operation: a team arrives,
-counts tens of thousands of items across many locations in a single shift, and leaves with
-a reconciled report. If the software fails halfway through, the count cannot simply be
-restarted the next morning.
+counts many locations in a single shift, and leaves with a reconciled report. If the
+software fails halfway through, the count cannot simply be restarted the next morning.
 
 Two constraints shape everything in this product:
 
@@ -24,22 +28,23 @@ Two constraints shape everything in this product:
    for, and replacing a fleet is expensive. Software that only supports modern Android
    scanners is not an option for these firms.
 2. **The count must survive interruptions.** Wi-Fi drops, batteries die, a device is
-   dropped. Counted data has to be recoverable rather than lost.
+   dropped. Counted data has to be kept on the device and recoverable, not lost with the
+   connection.
 
 ---
 
 ## Architecture
 
-Five layers, MVVM on the UI side, with the terminal client kept as a separate solution
-because it targets a completely different runtime.
+A layered desktop application (MVVM on the UI side) and a handheld client kept as a separate
+solution, because it targets a completely different runtime.
 
 ```mermaid
 flowchart TB
     subgraph Desktop["Desktop application — .NET 8"]
         App["App<br/>WPF · MVVM · Views &amp; ViewModels"]
-        Services["Services<br/>TCP · Auth · Reporting · Barcode · Import"]
+        Services["Services<br/>TCP server · Auth · Reporting · Import · Reconciliation"]
         Data["Data<br/>EF Core 8 · DbContext · Migrations"]
-        Core["Core<br/>Domain models · DTOs · SessionContext"]
+        Core["Core<br/>Domain models · DTOs · session state (DI)"]
         App --> Services --> Data --> Core
     end
 
@@ -54,31 +59,76 @@ flowchart TB
 
     Services <-->|"TCP over local Wi-Fi"| TApp
 
-    Reports["PDF · Excel · Word · CSV<br/>QuestPDF · ClosedXML"]
+    Reports["PDF · Excel · Word · CSV"]
     Services --> Reports
 ```
 
 The terminal client is **not** a shared project with the desktop application. It targets
 .NET CF 3.5 and is built in a separate Visual Studio 2008 solution — sharing code between
 a .NET 8 and a CF 3.5 target is not possible, so the boundary between them is the TCP
-protocol rather than a class library.
+protocol rather than a class library. A separate command-line tool covers administration,
+diagnostics and load testing.
 
 ---
 
 ## The interesting part: talking to a 2009 device
 
 The desktop application runs a custom TCP server. Terminals connect over the local
-network, receive their assigned locations, and stream counted lines back.
+network, log in, receive their catalogue and locations, and send counted lines back.
 
 What made this harder than a normal client/server feature:
 
 - **No modern tooling on the device side.** CF 3.5 has no `async`/`await`, no modern
   HTTP client, and a much smaller BCL. The protocol had to stay simple enough to
   implement twice, against two very different runtimes.
-- **The device holds its own database.** Counted lines are written to SQLite on the
-  device first, then synced. A dropped connection is a delay, not data loss.
+- **The device holds its own database.** Every scan is written to SQLite on the device
+  first. The operator sends a location's lines explicitly (send / finish on the device),
+  and they travel to the server in frames of up to 30 lines. A dropped connection stops
+  the sending, not the counting.
 - **Encoding matters.** Turkish characters do not survive a careless byte-level protocol,
-  and a stocktake full of mangled product names is worthless.
+  and a stocktake full of mangled product names is worthless. The protocol is UTF-8 end to
+  end, and its messages are signed.
+
+---
+
+## Not counting twice, not losing a scan
+
+Retries are normal on a flaky network: a frame times out, the device sends it again.
+Two decisions keep that from corrupting the count.
+
+- **Every scan stays its own row.** An early design merged repeated scans of the same
+  product at the same location into one row by adding the quantities. That made a retried
+  frame look like a second count and erased the audit trail, so merging was removed. Each
+  scan is stored separately, and a retry is recognised by the device's identity together
+  with the line's own identifier and per-device scan sequence; a line that already arrived
+  is acknowledged without being written again.
+- **Reconciliation against the device.** The terminal keeps its own record of what it
+  counted. The desktop compares that record with what reached the server per location and
+  product. Where the device has more than the server, an administrator can write back
+  exactly the missing difference, recalculated at the moment of transfer, so pressing the
+  button twice does not count anything twice.
+
+A related check covers people rather than networks: a manager can mark a location for a
+**blind control count**, where a second counter recounts it without seeing the first result,
+and the two rounds are compared and approved on the desktop.
+
+---
+
+## Load test
+
+The command-line tool can open many real TCP clients against the server. The most recent
+recorded run (2026-08-27):
+
+| | |
+|---|---|
+| Setup | 45 simulated terminals as TCP clients on one machine, SQL Server Express, message signing on |
+| Load | 45 × 200 = 9,000 scans in frames of 30, against a 1,000-product catalogue |
+| Result | 9,000 sent, 9,000 acknowledged, 0 errors, in each of four runs; database totals checked separately |
+| Login P95 | 1,513 ms on a cold start, 71–100 ms on warm runs |
+| Throughput | 456 scans/s cold, 855–972 scans/s warm |
+
+This measures the server and database path. It is not a test with 45 physical devices or a
+real warehouse network.
 
 ---
 
@@ -91,7 +141,7 @@ What made this harder than a normal client/server feature:
 | SQL integration | 32 |
 | **Total** | **6,126** |
 
-*Measured 2026-08-27. All green.*
+*As recorded in the project changelog on 2026-08-27, all passing.*
 
 The suite includes **guard tests** — tests whose job is to fail the build when the codebase
 drifts, rather than to check a feature. One of them checks that development-only code paths
@@ -111,14 +161,14 @@ seen it fail for the right reason.**
 
 ## Reporting, packaging and licensing
 
-- **Reporting** — PDF, Excel, Word and CSV output via QuestPDF and ClosedXML; charts with
-  LiveChartsCore and SkiaSharp; structured file logging with Serilog.
-- **Packaging** — Inno Setup installer with a publish pipeline.
-- **Licensing** — a hardware-locked scheme designed around RSA-2048 signatures and a machine
-  fingerprint, with a per-customer terminal limit enforced server-side. Terminal-side
-  licensing was deliberately dropped: the devices are old, and asking a counting crew to
-  type a licence key into a 2009 handheld during a shift is a support burden that buys
-  nothing.
+- **Reporting** — PDF, Excel, Word and CSV output; charts on the desktop dashboard;
+  structured file logging.
+- **Packaging** — a Windows installer with a publish pipeline. Updates for the handheld
+  client are published from the desktop as signed packages, by authorised users only.
+- **Licensing** — the desktop application is licensed per machine. Terminal-side licensing
+  was deliberately dropped: the devices are old, and asking a counting crew to type a
+  licence key into a 2009 handheld during a shift is a support burden that buys nothing.
+- **Access** — role-based permissions and an audit log for administrative actions.
 
 ---
 
@@ -137,7 +187,7 @@ the reasoning behind a rejected option is part of the record too.
 |---|---|
 | UI | .NET 8, WPF, MaterialDesignThemes, CommunityToolkit.Mvvm |
 | ORM / database | EF Core 8, SQL Server |
-| Reporting | QuestPDF, ClosedXML |
+| Reporting | QuestPDF, ClosedXML, DocX |
 | Charting | LiveChartsCore, SkiaSharp |
 | Logging | Serilog |
 | Testing | xUnit, Moq |
@@ -149,7 +199,8 @@ the reasoning behind a rejected option is part of the record too.
 
 ## Screenshots
 
-*To be added.*
+Screenshots are not published while the product is being prepared for sale. The diagram
+above shows how the parts fit together.
 
 ---
 
